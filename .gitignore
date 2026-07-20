@@ -1,0 +1,9 @@
+node_modules
+# Keep environment variables out of version control
+.env
+
+/generated/prisma
+
+
+
+git remote add origin https://github.com/Sonali8706/platformpilot-backend.git

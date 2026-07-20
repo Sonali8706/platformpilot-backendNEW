@@ -1,0 +1,110 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  rider
+  admin
+}
+
+enum FuelType {
+  petrol
+  diesel
+  electric
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  fullName     String   @map("full_name")
+  role         Role     @default(rider)
+  city         String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  vehicles Vehicle[]
+  trips    Trip[]
+  goals Goal[]
+
+  @@map("users")
+}
+
+model Vehicle {
+  id                 String   @id @default(uuid())
+  userId             String   @map("user_id")
+  vehicleType        String   @map("vehicle_type")
+  fuelEfficiencyKmpl Decimal  @map("fuel_efficiency_kmpl") @db.Decimal(5, 2)
+  fuelType           FuelType @map("fuel_type")
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  user  User   @relation(fields: [userId], references: [id])
+  trips Trip[]
+
+  @@map("vehicles")
+}
+
+model Platform {
+  id           String  @id @default(uuid())
+  name         String  @unique
+  displayColor String? @map("display_color")
+  isActive     Boolean @default(true) @map("is_active")
+
+  trips Trip[]
+
+  @@map("platforms")
+}
+
+model Trip {
+  id                String   @id @default(uuid())
+  userId            String   @map("user_id")
+  platformId        String   @map("platform_id")
+  vehicleId         String   @map("vehicle_id")
+  tripDate          DateTime @map("trip_date") @db.Date
+  startTime         DateTime @map("start_time") @db.Time
+  dayOfWeek         Int      @map("day_of_week")
+  distanceKm        Decimal  @map("distance_km") @db.Decimal(6, 2)
+  earnings          Decimal  @db.Decimal(8, 2)
+  fuelCostEstimated Decimal? @map("fuel_cost_estimated") @db.Decimal(8, 2)
+  netEarning        Decimal? @map("net_earning") @db.Decimal(8, 2)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  user     User     @relation(fields: [userId], references: [id])
+  platform Platform @relation(fields: [platformId], references: [id])
+  vehicle  Vehicle  @relation(fields: [vehicleId], references: [id])
+
+  @@index([userId, tripDate])
+  @@index([userId, platformId])
+  @@map("trips")
+}
+
+model FuelPriceLog {
+  id            String   @id @default(uuid())
+  fuelType      FuelType @map("fuel_type")
+  pricePerLitre Decimal  @map("price_per_litre") @db.Decimal(6, 2)
+  effectiveDate DateTime @map("effective_date") @db.Date
+  city          String?
+
+  @@map("fuel_price_log")
+}
+enum GoalPeriod {
+  daily
+  weekly
+}
+
+model Goal {
+  id           String     @id @default(uuid())
+  userId       String     @map("user_id")
+  periodType   GoalPeriod @map("period_type")
+  targetAmount Decimal    @map("target_amount") @db.Decimal(8, 2)
+  isActive     Boolean    @default(true) @map("is_active")
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("goals")
+}
