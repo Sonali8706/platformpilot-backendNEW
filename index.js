@@ -12,8 +12,19 @@ const { requireAuth } = require('./middleware/authMiddleware');
 const goalRoutes = require('./routes/goalRoutes');
 
 const app = express();
+app.set("trust proxy", 1);
 
-app.use(cors());
+
+const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
+  .split(",")
+  .map(origin => origin.trim());
+
+app.use(cors({
+  origin: allowedOrigins,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 app.use(express.json());
 
 app.use('/api/auth', authRoutes);
@@ -42,7 +53,9 @@ app.get('/api/me', requireAuth, (req, res) => {
   res.json({ status: 'ok', loggedInAs: req.user });
 });
 
-const PORT = 4000;
-app.listen(PORT, () => {
-  console.log(`PlatformPilot backend running on http://localhost:${PORT}`);
+
+const PORT = process.env.PORT || 4000;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`PlatformPilot backend running on port ${PORT}`);
 });

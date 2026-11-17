@@ -1,4 +1,8 @@
 const prisma = require('../utils/prismaClient');
+const { getTimeOfDayBucket, getDayType, computeSlotScore } = require('../utils/recommendationEngine');
+
+const HALF_LIFE_DAYS = 14;
+const MIN_TRIPS_FOR_CONFIDENCE = 3;
 
 function getPeriodBounds(periodType) {
   const now = new Date();
@@ -9,9 +13,8 @@ function getPeriodBounds(periodType) {
     end.setDate(end.getDate() + 1);
     return { start, end };
   }
-  // weekly: Monday through Sunday
   const start = new Date(now);
-  const day = start.getDay(); // 0 = Sunday ... 6 = Saturday
+  const day = start.getDay();
   const diffToMonday = (day === 0 ? -6 : 1 - day);
   start.setDate(start.getDate() + diffToMonday);
   start.setHours(0, 0, 0, 0);
@@ -30,7 +33,6 @@ async function setGoal(req, res) {
       });
     }
 
-    // Only one active goal at a time — replacing an old one deactivates it rather than deleting it
     await prisma.goal.updateMany({
       where: { userId: req.user.id, isActive: true },
       data: { isActive: false },
@@ -42,6 +44,7 @@ async function setGoal(req, res) {
 
     res.status(201).json({ status: 'ok', goal });
   } catch (err) {
+    console.error('Goal error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }
 }
@@ -60,13 +63,11 @@ async function getGoalStatus(req, res) {
     const { start, end } = getPeriodBounds(goal.periodType);
     const now = new Date();
 
-    // How much has the rider already earned this period?
     const periodTrips = await prisma.trip.findMany({
       where: { userId: req.user.id, tripDate: { gte: start, lt: end } },
     });
     const achievedSoFar = periodTrips.reduce((sum, t) => sum + Number(t.netEarning || 0), 0);
 
-    // Establish a realistic "per active working day" earning rate from the trailing 30 days
     const trailingStart = new Date(now);
     trailingStart.setDate(trailingStart.getDate() - 30);
     const trailingTrips = await prisma.trip.findMany({
@@ -76,7 +77,7 @@ async function getGoalStatus(req, res) {
     const activeDays = new Set(trailingTrips.map((t) => new Date(t.tripDate).toDateString()));
     const totalTrailingNet = trailingTrips.reduce((sum, t) => sum + Number(t.netEarning || 0), 0);
     const avgNetPerActiveDay = activeDays.size > 0 ? totalTrailingNet / activeDays.size : 0;
-    const activeDayRatio = activeDays.size / 30; // how often, historically, the rider actually works
+    const activeDayRatio = activeDays.size / 30;
 
     const msRemaining = end.getTime() - now.getTime();
     const daysRemaining = Math.max(0, msRemaining / (1000 * 60 * 60 * 24));
@@ -87,26 +88,6 @@ async function getGoalStatus(req, res) {
     const target = Number(goal.targetAmount);
     const onTrack = projectedTotal >= target;
     const shortfall = Math.max(0, target - projectedTotal);
-
-    // Reuse the same recency-weighted slot scoring as the main recommendation engine,
-    // to point at exactly where extra trips would help close the gap
-    const HALF_LIFE_DAYS = 14;
-    const MIN_TRIPS_FOR_CONFIDENCE = 3;
-
-    function getTimeOfDayBucket(hour) {
-      if (hour >= 0 && hour < 6) return 'Early Morning';
-      if (hour >= 6 && hour < 11) return 'Morning';
-      if (hour >= 11 && hour < 16) return 'Afternoon';
-      if (hour >= 16 && hour < 21) return 'Evening';
-      return 'Night';
-    }
-    function getDayType(dayOfWeek) {
-      return (dayOfWeek === 0 || dayOfWeek === 6) ? 'Weekend' : 'Weekday';
-    }
-    function recencyWeight(tripDate) {
-      const daysAgo = (Date.now() - new Date(tripDate).getTime()) / (1000 * 60 * 60 * 24);
-      return Math.pow(0.5, daysAgo / HALF_LIFE_DAYS);
-    }
 
     const allTrips = await prisma.trip.findMany({
       where: { userId: req.user.id },
@@ -127,20 +108,13 @@ async function getGoalStatus(req, res) {
 
     const topSlots = Object.values(groups)
       .map((g) => {
-        let weightedSum = 0;
-        let weightTotal = 0;
-        for (const t of g.trips) {
-          const netPerKm = Number(t.netEarning) / Number(t.distanceKm);
-          const w = recencyWeight(t.tripDate);
-          weightedSum += netPerKm * w;
-          weightTotal += w;
-        }
+        const { weightedAvgNetPerKm, tripCount } = computeSlotScore(g.trips, HALF_LIFE_DAYS);
         return {
           platformName: g.platformName,
           dayType: g.dayType,
           timeOfDay: g.timeOfDay,
-          weightedAvgNetPerKm: Math.round((weightTotal > 0 ? weightedSum / weightTotal : 0) * 100) / 100,
-          tripCount: g.trips.length,
+          weightedAvgNetPerKm,
+          tripCount,
         };
       })
       .filter((s) => s.tripCount >= MIN_TRIPS_FOR_CONFIDENCE)
@@ -159,6 +133,7 @@ async function getGoalStatus(req, res) {
       topSlots,
     });
   } catch (err) {
+    console.error('Goal status error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }
 }

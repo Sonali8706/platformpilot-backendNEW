@@ -33,9 +33,20 @@ async function main() {
     { fuelType: 'electric', pricePerLitre: 8.50, effectiveDate: ninetyDaysAgo, city: null },
   ];
 
-  for (const price of fuelPrices) {
+  
+for (const price of fuelPrices) {
+  const existing = await prisma.fuelPriceLog.findFirst({
+    where: {
+      fuelType: price.fuelType,
+      city: null,
+    },
+  });
+
+  if (!existing) {
     await prisma.fuelPriceLog.create({ data: price });
   }
+}
+
 
   console.log('Platforms seeded successfully.');
 }
